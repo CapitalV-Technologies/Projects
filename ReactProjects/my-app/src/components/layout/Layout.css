@@ -1,0 +1,30 @@
+.navbar-component {
+    display: flex;
+    margin-top: 0;
+    width: 100%;
+    height: 4rem;
+}
+.sidebar-component {
+    display: flex;
+    width: 18%;
+    height: 44rem;
+}
+.footer-component {
+    display: flex;
+    overflow: auto;
+    margin-bottom: 0;
+    width: 100%;
+    height: 3.5rem;
+}
+.body {
+    display: flex;
+    width: 100%;
+    margin-right: 0;
+    margin-left: 0;
+}
+.page-component {
+    flex: 1;
+    display: flex;
+    width: 100%;
+    margin-left: 0;
+}

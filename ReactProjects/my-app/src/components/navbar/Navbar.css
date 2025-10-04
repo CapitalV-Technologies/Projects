@@ -1,0 +1,29 @@
+/* Main container */
+.navbar {
+	display: flex;
+	font-size: .5rem;
+	font-family: 'Times New Roman', Times, serif;
+	background-color: var(--Navbar-Footer);
+	color: var(--Primary-Text);
+	width: 100%;
+	height: 100%;
+}
+/* Individual containers within navbar */
+ .navbar-button {
+	display: flex;
+	width: 5%;
+	font-size: 1.5rem;
+	background-color: var(--Navbar-Footer);
+	color: var(--Primary-Text);
+}
+.navbar-header {
+	display: flex;
+	width: 100%;
+}
+.navbar-company {
+	margin-top: .4rem;
+	font-size: .65rem;
+	font-weight: bold;
+	margin-right: .5rem;
+}
+/* Use @media to adjust for different viewport sizes in the future. Ex: mobile devices */

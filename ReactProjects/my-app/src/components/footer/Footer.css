@@ -1,0 +1,9 @@
+.footer {
+	display: flex;
+	font-size: .5rem;
+	font-family: 'Times New Roman', Times, serif;
+        background-color: var(--Navbar-Footer);
+        color: var(--Primary-Text);
+        width: 100%;
+        height: 100%;
+}
