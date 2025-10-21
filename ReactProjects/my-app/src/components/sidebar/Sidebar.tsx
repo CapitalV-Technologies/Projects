@@ -18,7 +18,7 @@ export default function SideBar({isVisible}: SidebarProps) {
             label: "Resins",
             id: "2",
             icon: "pi pi-wrench",
-            url: '/yourmom',
+            url: 'app/resin',
         },
         {
             label: "Contact",
