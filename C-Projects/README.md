@@ -1,9 +1,9 @@
-C Assignments
+C Assignments From Fall of 2025 CMPSC 311
 
-Will be adding to this throughout the semester.
+README file is assignment description
 
-.h file is assignment description
+.h file is function descriptions
 
 .c file is my work
 
-They start off easy. Will get more difficult throughout the semester. 
+driver file is test cases
