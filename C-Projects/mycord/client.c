@@ -11,11 +11,9 @@
 #include <signal.h>
 #include <ctype.h>
 #include <stdint.h>
-#include <termios.h>
-#include <sys/ioctl.h>
 
-// --- Definitions ---
-
+// typedef enum MessageType { ... } message_type_t;
+// Create Enums for Message Types
 typedef enum MessageType {
     LOGIN = 0,
     LOGOUT = 1,
@@ -23,8 +21,11 @@ typedef enum MessageType {
     MESSAGE_RECV = 10,
     DISCONNECT = 12,
     SYSTEM = 13
+
 } message_type_t;
 
+// typedef struct __attribute__((packed)) Message { ... } message_t;
+// Create Struct for message
 typedef struct __attribute__((packed)) Message {
     unsigned int type;
     unsigned int time;
@@ -35,412 +36,381 @@ typedef struct __attribute__((packed)) Message {
 typedef struct Settings {
     struct sockaddr_in server;
     bool quiet;
-    bool tui_mode; // Added TUI flag
     int socket_fd;
     bool running;
     char username[32];
 } settings_t;
-
-// --- TUI Globals ---
-#define MAX_HISTORY 500
-#define MAX_INPUT_LEN 1024
-
-// Structure to store a formatted string for history
-typedef struct {
-    char text[1200]; // Pre-formatted text (including colors)
-} history_entry_t;
-
-static history_entry_t history[MAX_HISTORY];
-static int history_count = 0;
-static int scroll_offset = 0; // 0 = at bottom, >0 = scrolling back
-static char input_buffer[MAX_INPUT_LEN] = {0};
-static int input_len = 0;
-static struct termios orig_termios; // To restore terminal settings
-static pthread_mutex_t tui_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static char* COLOR_RED = "\033[31m";
 static char* COLOR_GRAY = "\033[90m";
 static char* COLOR_RESET = "\033[0m";
 static settings_t settings = {0};
 
-// --- Helper Functions ---
-
-// Get current terminal window size
-void get_window_size(int *rows, int *cols) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        *rows = 24; // Fallback
-        *cols = 80;
-    } else {
-        *rows = ws.ws_row;
-        *cols = ws.ws_col;
-    }
-}
-
-// Disable Raw Mode (Restore terminal)
-void disable_raw_mode() {
-    if (settings.tui_mode) {
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-        printf("\033[?25h"); // Show cursor
-    }
-}
-
-// Enable Raw Mode (Read byte-by-byte, no echo)
-void enable_raw_mode() {
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(disable_raw_mode);
-    struct termios raw = orig_termios;
-    // Turn off ECHO, ICANON (canonical mode), IEXTEN, ISIG (signals like Ctrl-C)
-    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    raw.c_cc[VMIN] = 0;  // Non-blocking read
-    raw.c_cc[VTIME] = 1; // 100ms timeout
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    printf("\033[?25l"); // Hide cursor initially (we will place it manually)
-}
-
-// Add a formatted line to history
-void add_to_history(const char* formatted_msg) {
-    pthread_mutex_lock(&tui_mutex);
-    if (history_count < MAX_HISTORY) {
-        strncpy(history[history_count].text, formatted_msg, 1199);
-        history_count++;
-    } else {
-        // Shift array left to make room (simple implementation)
-        for (int i = 0; i < MAX_HISTORY - 1; i++) {
-            history[i] = history[i+1];
-        }
-        strncpy(history[MAX_HISTORY-1].text, formatted_msg, 1199);
-    }
-    pthread_mutex_unlock(&tui_mutex);
-}
-
-// The core TUI drawing function
-void draw_interface() {
-    if (!settings.running) return;
-    
-    pthread_mutex_lock(&tui_mutex);
-    
-    int rows, cols;
-    get_window_size(&rows, &cols);
-
-    // 1. Hide Cursor & Move to Top Left
-    printf("\033[?25l\033[H");
-
-    // 2. Calculate drawing area
-    int input_area_height = 1; // Just one line for input at bottom
-    int message_area_height = rows - input_area_height - 1; // -1 for separator
-
-    // 3. Draw Messages
-    // We want to draw from (history_count - scroll_offset) upwards
-    int start_index = history_count - scroll_offset - message_area_height;
-    if (start_index < 0) start_index = 0;
-    int end_index = history_count - scroll_offset;
-    if (end_index > history_count) end_index = history_count;
-
-    // Clear Screen Area (manually helps prevent flicker compared to \033[2J)
-    // Actually, \033[2J is safer for full redraws.
-    printf("\033[2J\033[H");
-
-    int current_row = 1;
-    for (int i = start_index; i < end_index; i++) {
-        // Move to row
-        printf("\033[%d;1H", current_row++);
-        // Print message
-        printf("%s", history[i].text);
-    }
-
-    // 4. Draw Separator Line
-    printf("\033[%d;1H", rows - 1);
-    for(int i=0; i<cols; i++) printf("-");
-
-    // 5. Draw Input Line
-    printf("\033[%d;1H", rows); // Go to last row
-    printf("> %s", input_buffer);
-
-    // 6. Position Cursor at end of input
-    printf("\033[%d;%dH", rows, input_len + 3); // +3 for "> "
-    
-    // 7. Show Cursor
-    printf("\033[?25h");
-    fflush(stdout);
-    
-    pthread_mutex_unlock(&tui_mutex);
-}
-
-// --- Logic ---
-
 int process_args(int argc, char *argv[]) {
+    // Create string arrays for argument parsing
     int index = 0;
     char help[] = "--help";
     char port[] = "--port";
     char ip[] = "--ip";
     char domain[] = "--domain";
     char quiet[] = "--quiet";
-    char tui[] = "--tui"; // NEW FLAG
     bool ip_domain_given = false;
-
+    // Parse arguments
     while (index < argc) {
-        if (strcmp(argv[index], help) == 0) {
-            fprintf(stdout, "usage: ./client [-h] [--port PORT] [--ip IP] [--domain DOMAIN] [--quiet] [--tui]\n");
-            return -1;
-        } else if (strcmp(argv[index], port) == 0) {
-            if (index + 1 < argc) {
-                int port = atoi(argv[index + 1]);
-                if ((port > 65535) || (port < 0)) return -1;
-                settings.server.sin_port = htons((unsigned short)port);
-                index++;
-            } else return -1;
+	// Handle help flag
+	if (strcmp(argv[index], help) == 0) {
+		fprintf(stdout, "usage: ./client [-h] [--port PORT] [--ip IP] [--domain DOMAIN] [--quiet]\n\nmycord client\n\noptions:\n  --help                show this help message and exit\n  --port PORT           port to connect to (default: 8080)\n  --ip IP               IP to connect to (default: 127.0.0.1)\n  --domain DOMAIN       Domain name to connect to (if domain is specified, IP must not be)\n  --quiet               do not perform alerts or mention highlighting\n\nexamples:\n  ./client --help (prints the above message)\n  ./client --port 1738 (connects to a mycord server at 127.0.0.1:1738)\n  ./client --domain example.com (connects to a mycord server at example.com:8080)\n");
+		return -1;
+	// Handle port flag
+	} else if (strcmp(argv[index], port) == 0) {
+                // Check to make sure a following argument is given
+		if (index + 1 < argc) {
+			// Check for invalid port so explicit cast to unsigned short works correctly
+			int port = atoi(argv[index + 1]);
+			if ((port > 65535) || (port < 0)) {
+				fprintf(stderr, "Error: Not a valid port number\n");
+				return -1;
+			}
+			// Set new port value and skip next argument
+			settings.server.sin_port = htons((unsigned short)port);
+			index++;
+
+		} else {
+			fprintf(stderr, "Error: No port given\n");
+			return -1;
+		}
+	// Handle ip flag
         } else if (strcmp(argv[index], ip) == 0) {
-            if (ip_domain_given) return -1;
-            if (index + 1 < argc) {
-                if (!inet_aton(argv[index + 1], &(settings.server.sin_addr))) return -1;
-                index++;
-                ip_domain_given = true;
-            } else return -1;
-        } else if (strcmp(argv[index], domain) == 0) {
-            if (ip_domain_given) return -1;
-            if (index + 1 < argc) {
-                struct hostent* host_info = gethostbyname(argv[index + 1]);
-                if (!host_info || host_info->h_addrtype != AF_INET) return -1;
-                settings.server.sin_addr = *(struct in_addr*)(host_info->h_addr_list[0]);
-                index++;
-                ip_domain_given = true;
-            } else return -1;
-        } else if (strcmp(argv[index], quiet) == 0) {
-            settings.quiet = true;
-        } else if (strcmp(argv[index], tui) == 0) {
-            settings.tui_mode = true;
-        }
-        index++;
+                // Check to make sure domain address hasn't been given already
+		if (ip_domain_given == true) {
+                        fprintf(stderr, "Error: IP address and Domain specified. Only one is allowed\n");
+                        return -1;
+                }
+		// Check to make sure a following argument is given
+                if (index + 1 < argc) {
+			// Set new IP address in settings struct
+                        int convert = inet_aton(argv[index + 1], &(settings.server.sin_addr));
+			if ((convert == 0) || (convert == -1)) {
+				fprintf(stderr, "Error: IP address conversion failed\n");
+                        	return -1;
+			}
+                        index++;
+			ip_domain_given = true;
+
+                } else {
+                        fprintf(stderr, "Error: No IP address given given\n");
+                        return -1;
+                }
+	// Handle domain flag
+	} else if (strcmp(argv[index], domain) == 0) {
+                // Check to make sure a following argument is given
+		// Check to make sure IP address is not given
+		if (ip_domain_given == true) {
+			fprintf(stderr, "Error: IP address and Domain specified. Only one is allowed\n");
+                        return -1;
+		}
+                if (index + 1 < argc) {
+			// Get IP address with domain name
+			struct hostent* host_info = gethostbyname(argv[index + 1]);
+			// Check if we found a valid IP4 address
+			if ((host_info == NULL) || (host_info->h_addrtype != AF_INET) || (host_info->h_addr_list[0] == NULL)) {
+				fprintf(stderr, "Error: Non-valid Domain name\n");
+                        	return -1;
+			}
+                        settings.server.sin_addr = *(struct in_addr*)(host_info->h_addr_list[0]);
+                        index++;
+			ip_domain_given = true;
+
+                } else {
+                        fprintf(stderr, "Error: No IP address given given\n");
+                        return -1;
+                }
+	// handle quiet flag
+	} else if (strcmp(argv[index], quiet) == 0) {
+                	settings.quiet = true;
+                }
+	index++;
     }
+    // Return 0 to signify success
     return 0;
 }
 
 int get_username() {
+    // Goal: get username using whoami shell command
+    // Open another process
     FILE* username = popen("whoami", "r");
-    if (username == NULL) return -1;
+    if (username == NULL) {
+	fprintf(stderr, "Error: Failed to get username\n");
+	return -1;
+    }
+    // Read output of process
     char buffer[32];
     int index = 0;
     int c;
     while ((c = fgetc(username)) != EOF) {
-        if (isprint(c)) {
-            buffer[index++] = c;
-            if (index == 31) break;
-        }
+	// Check to make sure character is printable ASCII
+	// If not, don't add to username (removes newline character)
+	if (isprint(c) != 0) {
+		buffer[index] = c;
+		index++;
+		// Make sure username is not too long
+		if (index == 31) {
+			break;
+		}
+	}
     }
     pclose(username);
-    if (index == 0) return -1;
+    // Check if username is empty
+    if (index == 0) {
+	fprintf(stderr, "Error: Empty username\n");
+        return -1;
+    }
+    // Add a null terminator
     buffer[index] = '\0';
+    // Add username to settings struct
     strcpy(settings.username, buffer);
+    // Return 0 to signify success
     return 0;
 }
 
 ssize_t perform_full_read(void *buf, size_t n) {
+    // Used previous test to help build this function
+    // Check for valid inputs
+    if ((buf == NULL) || (n < 1)) return -1;
     int total = 0;
+    // Loop through to prevent short read
     while (total < n) {
-        int curr = read(settings.socket_fd, buf + total, n - total);
-        if (curr == 0) return 0;
-        if (curr == -1) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        total += curr;
+	// Read from network socket the correct number of bytes
+	int curr = read(settings.socket_fd, buf + total, n - total);
+	if (curr == 0) return 0;
+	// Check for error or signal interrupt
+	// Continue if signal interrupt
+	// return -1 for error
+	if (curr == -1) {
+		if (errno == EINTR) continue;
+		fprintf(stderr, "Error: read errored\n");
+		raise(SIGINT);
+		return -1;
+	}
+	total += curr;
     }
     return total;
 }
 
 void* receive_messages_thread(void* arg) {
-    while (settings.running) {
-        message_t recieved_message;
-        ssize_t n = perform_full_read(&recieved_message, sizeof(recieved_message));
-        
-        if (n <= 0) {
-            settings.running = false;
-            break;  
-        }
-
-        recieved_message.type = ntohl(recieved_message.type);
-        recieved_message.time = ntohl(recieved_message.time);   
-        
-        char msg_buffer[1200]; // Buffer to format string
-        msg_buffer[0] = '\0';
-
+    // while some condition(s) are true
+    //Use settings.running as global flag
+    while (settings.running == true) {
+        // read message from the server (ensure no short reads)
+	message_t recieved_message;
+	ssize_t n = perform_full_read(&recieved_message, sizeof(recieved_message));
+	// if n = 0, then server closed the connection. Don't send Logout, immediately kill
+	if (n == 0) {
+		settings.running = false;
+		break;	
+	}
+	// Convert everything to host bytes. Don't need to convert arrays
+	recieved_message.type = ntohl(recieved_message.type);
+	recieved_message.time = ntohl(recieved_message.time);	
+        // check the message type
         if (recieved_message.type == SYSTEM) {
-            snprintf(msg_buffer, 1200, "%s[SYSTEM] %s%s", COLOR_GRAY, recieved_message.message, COLOR_RESET);
-        } else if (recieved_message.type == DISCONNECT) {
-            snprintf(msg_buffer, 1200, "%s[DISCONNECT] %s%s", COLOR_RED, recieved_message.message, COLOR_RESET);
-            settings.running = false;
-        } else if (recieved_message.type == MESSAGE_RECV) {
+            // for system types, print the message in gray with username SYSTEM
+	    char system[] = "[SYSTEM]";
+	    fprintf(stdout, "%s%s %s%s\n", COLOR_GRAY, system, recieved_message.message, COLOR_RESET);
+	} else if (recieved_message.type == DISCONNECT) {
+            // for disconnect types, print the reason in red with username DISCONNECT and exit
+	    char disconnect[] = "[DISCONNECT]";
+            fprintf(stdout, "%s%s %s%s\n", COLOR_RED, disconnect, recieved_message.message, COLOR_RESET);
+	    settings.running = false;
+	    // I realize this causes a memory leak, but couldn't figure out how to solve this (and not have stdin lag) in time. 
+	    raise(SIGKILL);
+	} else if (recieved_message.type == MESSAGE_RECV) {
+            // for message types, print the message and do highlight parsing (if not quiet)
+            // Handle Time
             time_t time = (time_t)recieved_message.time;
             struct tm* tm = localtime(&time);
-            char time_str[64];
-            strftime(time_str, 64, "%Y-%m-%d %H:%M:%S", tm); // Shorter time for TUI
-
-            // Highlight check
-            bool highlight = false;
-            if (!settings.quiet) {
-                char* found = strstr(recieved_message.message, "@");
-                if (found && strncmp(found + 1, settings.username, strlen(settings.username)) == 0) {
-                    highlight = true;
+            char buffer[256];
+            strftime(buffer, 256, "%Y-%m-%d %H:%M:%S", tm);
+            // Don't highlight if settings.quiet is true
+            if (settings.quiet == true) {
+                fprintf(stdout, "%s %s: %s\n", buffer, recieved_message.username, recieved_message.message);
+            } else {
+                // Highlight mentions
+                // go character by character looking for the @ and our current username
+                fprintf(stdout, "%s %s: ", buffer, recieved_message.username);
+                int ind = 0;
+                size_t len = strlen(settings.username);
+                while ((ind < 1024) && (recieved_message.message[ind] != '\0')) {
+                        if ((recieved_message.message[ind] == '@') && (strncmp(settings.username, &recieved_message.message[ind + 1], len) == 0)) {
+                                fprintf(stdout, "\a%s@%s%s", COLOR_RED, settings.username, COLOR_RESET);
+                                ind += len + 1;
+                        } else {
+                                putchar(recieved_message.message[ind]);
+                                ind++;
+                        }
                 }
+                putchar('\n');
             }
-            
-            if (highlight) {
-                snprintf(msg_buffer, 1200, "%s %s: %s%s%s", time_str, recieved_message.username, COLOR_RED, recieved_message.message, COLOR_RESET);
-            } else {
-                snprintf(msg_buffer, 1200, "%s %s: %s", time_str, recieved_message.username, recieved_message.message);
-            }
-        }
-
-        if (msg_buffer[0] != '\0') {
-            if (settings.tui_mode) {
-                // In TUI mode, update history and redraw
-                add_to_history(msg_buffer);
-                // Only redraw if user is looking at the bottom
-                if (scroll_offset == 0) draw_interface();
-            } else {
-                // Standard STDOUT mode
-                fprintf(stdout, "%s\n", msg_buffer);
-            }
-        }
-        
-        if (!settings.running) {
-           break;
+	} else {
+            // for anything else, print an error
+	    fprintf(stderr, "Error: Uknown Message Type\n");
 	}
     }
-    return NULL;
 }
 
 void cleanup() {
-    if (settings.tui_mode) disable_raw_mode();
-    close(settings.socket_fd);
-    settings.socket_fd = -1;
+	// Create function to clean up socket to reuse code
+	close(settings.socket_fd);
+    	settings.socket_fd = -1;
 }
 
 void handle_signal(int signal) {
+    // Create logout message
     message_t logout_message;
     logout_message.type = LOGOUT;
+    // Convert to Network byte order
     logout_message.type = htonl(logout_message.type);
-    write(settings.socket_fd, &logout_message, sizeof(logout_message));
+    // Send message
+    if (write(settings.socket_fd, &logout_message, sizeof(logout_message)) == -1) {
+        fprintf(stderr, "Error: Login message failed to send\n");
+    }
+    // Clean up and stop running
     cleanup();
     settings.running = false;
-    exit(0);
+    return;
 }
 
 int main(int argc, char *argv[]) {
-    // Setup signal handlers
+    // setup sigactions (ill-advised to use signal for this project, use sigaction with default (0) flags instead)
     struct sigaction new_action, old_action;
     new_action.sa_handler = handle_signal;
     new_action.sa_flags = 0;
-    sigemptyset(&new_action.sa_mask); // Best practice
     sigaction(SIGINT, &new_action, &old_action);
     sigaction(SIGTERM, &new_action, &old_action);
-
+    // Set inital values of settings struct
     settings.quiet = false;
     settings.running = false;
-    settings.tui_mode = false;
     settings.server.sin_family = AF_INET;
-    settings.server.sin_port = htons(8080);
-    inet_aton("127.0.0.1", &(settings.server.sin_addr));
-
-    if (get_username() == -1) return -1;
-    if (process_args(argc, argv) == -1) return -1;
-
+    uint16_t def = 8080;
+    // Convert to Network byte order
+    settings.server.sin_port = htons(def);
+    int success = inet_aton("127.0.0.1", &(settings.server.sin_addr));
+    if ((success) == 0 || (success == -1)) {
+	fprintf(stderr, "Error: inet_aton failure\n");
+	return -1;
+    }
+    // Get username and check for success
+    success = get_username();
+    if (success == -1) return -1;
+    // parse arguments
+    success = process_args(argc, argv);
+    if (success == -1) return -1;
+    // create socket
     settings.socket_fd = socket(settings.server.sin_family, SOCK_STREAM, 0);
-    if (settings.socket_fd == -1) return -1;
-
+    if (settings.socket_fd == -1) {
+	fprintf(stderr, "Error: socket failed on creation\n");
+	return -1;
+    }
+    // connect to server
     if (connect(settings.socket_fd, (const struct sockaddr*)&(settings.server), sizeof(settings.server)) == -1) {
-        fprintf(stderr, "Error: connection to server failed\n");
+	fprintf(stderr, "Error: connection to server failed\n");
+	cleanup();
         return -1;
     }
-
-    // Send login
+    // create and send login message
     message_t login_message;
     login_message.type = LOGIN;
     strcpy(login_message.username, settings.username);
+    // Convert to Network byte order
     login_message.type = htonl(login_message.type);
-    write(settings.socket_fd, &login_message, sizeof(login_message));
-
+    if (write(settings.socket_fd, &login_message, sizeof(login_message)) == -1) {
+	fprintf(stderr, "Error: Login message failed to send\n");
+	cleanup();
+	return -1;
+    }
     settings.running = true;
-
-    // Start receive thread
+    // create and start receive messages thread
     pthread_t thread1;
     pthread_create(&thread1, NULL, receive_messages_thread, NULL);
-
-    if (settings.tui_mode) {
-        enable_raw_mode();
-        draw_interface();
-
-        char c;
-        while (settings.running) {
-            // Read 1 byte. read returns 0 if no input (because of VTIME in raw mode)
-            if (read(STDIN_FILENO, &c, 1) == 1) {
-                if (c == '\033') { // Escape sequence start
-                    char seq[3];
-                    if (read(STDIN_FILENO, &seq[0], 1) == 0) continue;
-                    if (read(STDIN_FILENO, &seq[1], 1) == 0) continue;
-                    
-                    if (seq[0] == '[') {
-                        if (seq[1] == 'A') { // Arrow Up
-                             if (scroll_offset < history_count) scroll_offset++;
-                        } else if (seq[1] == 'B') { // Arrow Down
-                             if (scroll_offset > 0) scroll_offset--;
-                        }
-                    }
-                } else if (c == 127 || c == 8) { // Backspace
-                    if (input_len > 0) {
-                        input_buffer[--input_len] = '\0';
-                    }
-                } else if (c == '\n' || c == '\r') { // Enter
-                    if (input_len > 0) {
-                        // Send Message
-                        message_t send_message;
-                        send_message.type = MESSAGE_SEND;
-                        send_message.type = htonl(send_message.type);
-                        strcpy(send_message.message, input_buffer);
-                        write(settings.socket_fd, &send_message, sizeof(send_message));
-                        
-                        // Clear input
-                        memset(input_buffer, 0, MAX_INPUT_LEN);
-                        input_len = 0;
-                        scroll_offset = 0; // Snap to bottom on send
-                    }
-                } else if (c == 3) { // Ctrl+C
-                    handle_signal(SIGINT);
-		} else if (c == 4) { // NEW: Ctrl+D (EOF)
-    			handle_signal(SIGINT);
-                } else if (isprint(c)) {
-                     if (input_len < MAX_INPUT_LEN - 1) {
-                         input_buffer[input_len++] = c;
-                         input_buffer[input_len] = '\0';
-                     }
-                }
-                draw_interface();
-            }
-        }
-    } else {
-        // --- Original Standard Mode Loop ---
-        while (settings.running == true) {
-            char* message = NULL;
-            size_t size = 0;
-            ssize_t n_read = getline(&message, &size, stdin);
-            if (n_read <= 0) break; // Simplified error handling
-            
-            // Basic validation
-            if (n_read > 1023) { free(message); continue; }
-            
-            message_t send_message;
-            send_message.type = MESSAGE_SEND;
-            send_message.type = htonl(send_message.type);
-            message[n_read-1] = '\0'; // Remove newline
-            strcpy(send_message.message, message);
-            
-            if (write(settings.socket_fd, &send_message, sizeof(send_message)) <= 0) break;
-            free(message);
-        }
-    }
-
-    pthread_join(thread1, NULL);
+    // while some condition(s) are true
+    while (settings.running == true) {
+	bool skip_message_send = false;
+        // read a line from STDIN
+	char* message = NULL;
+	size_t size = 0;
+	ssize_t n_read = getline(&message, &size, stdin);
+        // do some error checking (handle EOF, EINTR, etc.)
+	if (n_read == -1) {
+		// If interrupt, continue read
+		if (errno == EINTR) {
+			free(message);
+			message = NULL;
+			continue;
+		}
+		// If control D, gracefully exit by calling SIGINT
+		if (feof(stdin) != 0) {
+			raise(SIGINT);
+			free(message);
+			message = NULL;
+			break;
+		// If Read error, do same thing
+		} else {
+			fprintf(stderr, "Error: Read Error\n");
+			raise(SIGINT);
+                	free(message);
+                	message = NULL;
+			skip_message_send = true;
+		}
+	}
+	// Check to make sure all characters are valid
+	if ((n_read > 0) && (message[n_read - 1] == '\n')) { 
+		size_t ind = 0; 
+		while (ind < (n_read - 1)) {
+			if (isprint(message[ind]) == 0) {
+				// Don't send message if error in input (set bool skip_message_send to true)
+				fprintf(stderr, "Error: Invalid input for message type\n");
+				free(message);
+				message = NULL;
+				skip_message_send = true;
+				break;
+			}
+		ind++;
+		}	
+	}
+	// Check if message is too large
+	if (n_read > 1023) {
+		fprintf(stderr, "Error: Invalid input for message type; input too larger\n");
+		free(message);
+		message = NULL;
+		skip_message_send = true;
+	}
+        // send message to the server
+	// Check if we should send message or not
+	if (skip_message_send == true) continue;
+	message_t send_message;
+	send_message.type = MESSAGE_SEND;
+	// Convert to Network byte order
+	send_message.type = htonl(send_message.type);
+	if (message != NULL) {
+		message[n_read - 1] = '\0';
+		strcpy(send_message.message, message);
+	}
+	// Write to socket
+	if (write(settings.socket_fd, &send_message, sizeof(send_message)) <= 0) {
+		fprintf(stderr, "Error: encountered a write error\n");
+		free(message);
+		message = NULL;
+		cleanup();
+		raise(SIGINT);
+		}
+	// Clean up
+	free(message);
+	message = NULL;
+	}
+    // wait for the thread / clean up
+    void* ret;
+    pthread_join(thread1, &ret);
+    // cleanup and return
     cleanup();
     return 0;
 }
