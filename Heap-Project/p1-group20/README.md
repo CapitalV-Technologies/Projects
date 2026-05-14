@@ -1,3 +1,8 @@
+For this project, we only edited mm.c 
+The rest was given to us
+scored 100%
+
+
 # Checkpoint 1 Work
 
 Micah implemented mm_init and malloc
