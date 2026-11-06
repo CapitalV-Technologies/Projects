@@ -11,8 +11,9 @@ class ParkingGarage:
         self.total_profit = 0
     
     def get_price:
-        print("The Bike price is $1. The Car price is $2. The Truck price is $3.")
-        return (self.__bike_price)
+        print(f"The Bike price is ${self.__bike_price}.
+        The Car price is ${self.__car_price}. 
+        The Truck price is ${self.__truck_price}.")
 
     def get_bike_price:
         return self.__bike_price
@@ -22,3 +23,25 @@ class ParkingGarage:
     
     def get_truck_price:
         return self.__truck_price
+
+    def set_bike_price(password, new_bike_price):
+        # Simple Password Check to show thinking about security
+        if password == "1234":
+            self.__bike_price == new_bike_price
+            print(f"New Bike Price has been set. The new price is now ${self.__bike_price}")
+        else:
+            print("Password is incorrect. Bike Price not updated. ")
+
+    def set_car_price(password, new_car_price):
+        if password == "1234":
+            self.__car_price == new_car_price
+            print(f"New Car Price has been set. The new price is now ${self.__car_price}")
+        else:
+            print("Password is incorrect. Car Price not updated. ")
+    
+    def set_truck_price(password, new_truck_price):
+        if password == "1234":
+            self.__truck_price == new_truck_price
+            print(f"New Truck Price has been set. The new price is now ${self.__truck_price}")
+        else:
+            print("Password is incorrect. Truck Price not updated. ")
