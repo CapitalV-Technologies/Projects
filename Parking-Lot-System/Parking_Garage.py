@@ -14,7 +14,7 @@ class ParkingGarage:
         self.__bike_price = 1
         self.__car_price = 2
         self.__truck_price = 3
-        self.total_profit = 0
+        self.profit = 0
         self.vehicles = {}
     
     def price(self):
@@ -81,10 +81,8 @@ class ParkingGarage:
         return vehicle_object
     
     def exits(self, ticket_number):
-        # Whole mess here cause then we don't know the spot...
-        # if ticket_number == "lost"
-        #     self.total_profit += 25
-        #     return "You owe 25$"
+        if ticket_number == "lost":
+            return "Please call handle_lost_ticket function with your vehicle type as parameter"
 
         if ticket_number not in self.vehicles:
             return "This ticket number was not found. Please try again."
@@ -110,26 +108,38 @@ class ParkingGarage:
         parked_time = vehicle_object.exits()
         payment_due = float(price) * parked_time
 
-        self.total_profit += payment_due
+        self.profit += payment_due
 
         return f"You have parked for {parked_time} hours at a price of ${price}/hour. You now owe ${payment_due}."
 
+    def handle_lost_ticket(self, vehicle):
+        # Problem: Our vehicle object gets lost in our dictionary here. 
+        if vehicle == "bike":
+            self.small += 1
+        elif vehicle == "car":
+            self.medium += 1
+        elif vehicle == "truck":
+            self.large += 1
+        price = 100
+        self.profit += 100
+        return "You now owe $100 for losing your ticket. You may exit the garage."
+
     def add_small_spots(self, password, spots):
-        if password != "1234"
+        if password != "1234":
             return "Password is incorrect. Spots not updated"
         self.small += spots
         self.total_spots += spots
         return f"Added {spots} small spots"
 
     def add_medium_spots(self, password, spots):
-        if password != "1234"
+        if password != "1234":
             return "Password is incorrect. Spots not updated"
         self.medium += spots
         self.total_spots += spots
         return f"Added {spots} medium spots"
 
     def add_large_spots(self, password, spots):
-        if password != "1234"
+        if password != "1234":
             return "Password is incorrect. Spots not updated"
         self.large += spots
         self.total_spots += spots
