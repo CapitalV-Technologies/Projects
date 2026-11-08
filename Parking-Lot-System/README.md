@@ -22,6 +22,7 @@ Step-by-step how to run:
     x.set_bike_price(password, new_price)
     x.set_car_price(password, new_price)
     x.set_truck_price(password, new_price)
+    x.get_profit()
 
 Design choices:  
     1. I wanted to mimick an actual parking garage as best as possible  

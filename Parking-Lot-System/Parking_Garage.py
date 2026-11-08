@@ -19,6 +19,9 @@ class ParkingGarage:
     
     def price(self):
         print(f"The Bike price is ${self.__bike_price}. The Car price is ${self.__car_price}. The Truck price is ${self.__truck_price}.")
+    
+    def get_profit(self):
+        return self.profit
 
     def get_bike_price(self):
         return self.__bike_price
