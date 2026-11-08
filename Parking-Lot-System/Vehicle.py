@@ -7,7 +7,7 @@ class Vehicle:
         self.spot = spot
         self.vehicle_type = vehicle_type
     
-    def exits(self):
+    def get_time_parked(self):
         seconds_parked = float(round(time.perf_counter() - self.start_time, 2))
         minutes_parked = round(seconds_parked / 60.0, 2)
         hours_parked = round(minutes_parked / 60.0, 2)
